@@ -21,30 +21,6 @@ class DPAgent():
             for s in self.states
         }
 
-    def transition_model(self, s, a):
-        outcomes = defaultdict(float) # key: (next_state, reward), values: cumulative prob
-        for stoc, p in zip(self.env.stoc_policy, self.env.stoc_probs):
-            reward = 0
-            reward -= 0.04
-            done = 0
-            dx, dy = a
-            x, y = s 
-            if stoc != 0: dx, dy = (0, 0)
-            nx, ny = (x + dx, y + stoc + dy)
-            ns = (nx, ny) # next_state
-            if nx < 0 or nx >= self.env.width or ny < 0 or ny >= self.env.height or ns in self.env.walls:
-                ns = s 
-            if ns in self.env.lakes:
-                done = 1
-                reward -= 1
-            elif ns == self.env.exit:
-                done = 1
-                reward += 1
-            
-            outcomes[(ns, reward)] += p
-
-        return outcomes
-
     def policy_evaluation(self, policy, theta = 1e-6):
         while True:
             delta = 0
@@ -60,7 +36,7 @@ class DPAgent():
                     if a_prob == 0:
                         continue
 
-                    outcomes = self.transition_model(state, self.env.action[a_id])
+                    outcomes = self.env.transition_model(state, self.env.action[a_id])
                     new_v += sum(a_prob * ns_p * (r + self.gamma * self.V[ns])
                                 for (ns, r), ns_p in outcomes.items()
                     )
@@ -78,14 +54,14 @@ class DPAgent():
                 continue 
 
             old_best_a = max(self.policy[s], key = self.policy[s].get)
-            q_values = defaultdict(float) # dict: (key: (s, a), value: q_val)
+            q_values = defaultdict(float) # dict: (key: a, value: q_val)
 
             for a_id, a_vec in self.env.action.items():
-                outcomes = self.transition_model(s, a_vec)
+                outcomes = self.env.transition_model(s, a_vec)
                 q_sa = sum(ns_p * (r + self.gamma * self.V[ns])
                            for (ns, r), ns_p in outcomes.items()
                 )
-                q_values[(s, a_id)] += q_sa
+                q_values[a_id] += q_sa
 
             best_a = max(q_values, key = q_values.get)
             if (best_a != old_best_a):
@@ -96,35 +72,54 @@ class DPAgent():
 
         return policy_stable      
 
+    def policy_iteration(self, theta = 1e-6):
+        n_iter = 0
+        while True:
+            self.policy_evaluation(self.policy, theta)
+            stable = self.policy_improvement()
+            n_iter += 1
+            if stable:
+                break
+        return n_iter
+    
     def value_iteration(self, theta = 1e-6):
-            """
+            n_iter = 0
             while True:
                 delta = 0
-    
-                for state, action in policy.items():
-                    if state in self.env.lakes or state == self.env.exit:
-                        continue
-    
+                for state in self.states:
+                    if state == self.env.exit or state in self.env.lakes:
+                        continue 
+
                     v_old = self.V[state]
-                    new_v = 0.0
-    
-                    for a_id, a_prob in action.items():
-                        if a_prob == 0:
-                            continue
-    
-                        outcomes = self.transition_model(state, self.env.action[a_id])
-                        new_v += sum(a_prob * ns_p * (r + self.gamma * self.V[ns])
-                                    for (ns, r), ns_p in outcomes.items()
-                        )
-    
-                    self.V[state] = new_v
+                    q_values = []
+                    for a_id, a_vec in self.action.items():
+                        outcomes = self.env.transition_model(state, a_vec)
+                        q_sa = sum(ns_p * (r + self.gamma * self.V[ns])
+                                   for (ns, r), ns_p in outcomes.items())
+                        q_values.append(q_sa)
+
+                    self.V[state] = max(q_values)
                     delta = max(delta, abs(v_old - self.V[state]))
-    
+
+                n_iter += 1
                 if delta < theta:
                     break         
-            """ 
 
-env = GridWorldEnv()
+            return n_iter
+    
+    def extract_policy(self):
+        policy_dict = {}
+        for s in self.states:
+            if s in self.env.lakes or s == self.env.exit:
+                continue
 
-agent = DPAgent(env)
-agent.policy_improvement()
+            best_a, best_q = None, -float('inf')
+            for a_id, a_vec in self.env.action.items():
+                outcomes = self.env.transition_model(s, a_vec)
+                q_sa = sum(ns_p * (r + self.gamma * self.V[ns])
+                           for (ns, r), ns_p in outcomes.items())
+                if q_sa > best_q:
+                    best_q, best_a = q_sa, a_id
+
+            policy_dict[s] = best_a
+        return policy_dict
